@@ -4,8 +4,6 @@ import os
 def generate_mock_data(output_dir="data/sim_data", num_samples=5):
     os.makedirs(output_dir, exist_ok=True)
     
-    # Simulate a single batch of Isaac Sim output
-    # Input: 5 frames of 256x256 RGB
     frames = torch.randn(num_samples, 5, 3, 256, 256)
     
     # Ground Truth at the bottleneck resolution (1/16 of 256 = 16)

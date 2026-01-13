@@ -45,7 +45,7 @@ class AccelSightNet(nn.Module):
         
         self.temporal_encoder = SpatioTemporalEncoder(64, 128)
         
-        # urther downsampling stage
+        # further downsampling stage
         self.bottleneck = nn.Sequential(
             nn.Conv2d(128, 256, kernel_size=3, padding=1, stride=2, bias=False), # 1/16
             nn.BatchNorm2d(256),
