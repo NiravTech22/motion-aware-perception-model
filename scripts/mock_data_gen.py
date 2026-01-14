@@ -11,13 +11,15 @@ def generate_mock_data(output_dir="data/sim_data", num_samples=5):
     gt_bbox = torch.randn(num_samples, 4, 16, 16)
     gt_velocity = torch.randn(num_samples, 3, 16, 16)
     gt_ids = torch.randint(0, 10, (num_samples, 16, 16))
-    
+    gt_controls = torch.randn(num_samples, 3)
+
     data = {
         "frames": frames,
         "gt_objectness": gt_objectness,
         "gt_bbox": gt_bbox,
         "gt_velocity": gt_velocity,
-        "gt_ids": gt_ids
+        "gt_ids": gt_ids,
+        "gt_controls": gt_controls
     }
     
     torch.save(data, os.path.join(output_dir, "mock_sample.pt"))
