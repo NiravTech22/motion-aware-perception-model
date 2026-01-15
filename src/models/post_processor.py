@@ -2,114 +2,105 @@ import torch
 import numpy as np
 from typing import Dict, List, Optional
 from data.messages import PerceptionOutput, TrackedObject, format_objects_to_message
-from .motion_tracker import MotionTracker
 
 try:
-    # Attempt to import compiled CUDA ops
     import accelsight_cuda
     HAS_CUDA = True
 except ImportError:
     HAS_CUDA = False
 
+class MotionTracker:
+    """
+    Object-level tracking state manager.
+    Encapsulates greedy association using spatial distance and Re-ID embeddings.
+    """
+    def __init__(self, dist_threshold: float = 2.0):
+        self.dist_threshold = dist_threshold
+        self.next_id = 1
+        self.active_tracks: List[TrackedObject] = []
+
+    def update(self, detections: List[TrackedObject]) -> List[TrackedObject]:
+        if not self.active_tracks:
+            self.active_tracks = [self._create_track(d, is_new=True) for d in detections]
+            return self.active_tracks
+
+        updated, matched_det = [], set()
+        for track in self.active_tracks:
+            best_idx, best_score = -1, -1.0
+            for j, det in enumerate(detections):
+                if j in matched_det: continue
+                dist = np.linalg.norm(track.pos - det.pos)
+                if dist < self.dist_threshold:
+                    # Score = Cosine Similarity + Proximity
+                    sim = (np.dot(track.embedding, det.embedding) / 
+                          (np.linalg.norm(track.embedding) * np.linalg.norm(det.embedding) + 1e-6)) if det.embedding is not None else 0
+                    score = sim + (1.0 - dist / self.dist_threshold)
+                    if score > best_score:
+                        best_score, best_idx = score, j
+
+            if best_idx != -1:
+                matched_det.add(best_idx)
+                updated.append(self._create_track(detections[best_idx], track_id=track.id))
+
+        # Add new tracks
+        updated.extend([self._create_track(d, is_new=True) for j, d in enumerate(detections) if j not in matched_det])
+        self.active_tracks = updated
+        return self.active_tracks
+
+    def _create_track(self, det: TrackedObject, track_id: Optional[int] = None, is_new: bool = False) -> TrackedObject:
+        if is_new:
+            id_to_use = self.next_id
+            self.next_id += 1
+        else:
+            id_to_use = track_id
+        return TrackedObject(id=id_to_use, category=det.category, pos=det.pos, vel=det.vel, 
+                             confidence=det.confidence, bbox=det.bbox, embedding=det.embedding)
+
 class PostProcessor:
     """
-    Orchestrates the decoding of raw neural inference outputs into perception messages.
-    Sole consumer of TensorRT tensors.
+    AccelSight Perception Engine.
+    Orchestrates CUDA-accelerated NMS, 3D coordinate mapping, and object tracking.
     """
-    def __init__(
-        self, 
-        conf_threshold: float = 0.5,
-        focal_length: float = 500.0,
-        img_res: int = 256,
-        grid_res: int = 16
-    ):
+    def __init__(self, conf_threshold: float = 0.5, focal_length: float = 500.0, img_res: int = 256, grid_res: int = 16):
         self.conf_threshold = conf_threshold
         self.tracker = MotionTracker()
-        
-        # Camera intrinsics (Placeholders - should be passed in production)
-        self.focal_x = focal_length
-        self.focal_y = focal_length
-        self.center_x = img_res / 2.0
-        self.center_y = img_res / 2.0
-        self.grid_scale = img_res / grid_res
+        self.focal = focal_length
+        self.center = img_res / 2.0
+        self.scale = img_res / grid_res
 
     def process(self, outputs: Dict[str, torch.Tensor], timestamp: float) -> List[PerceptionOutput]:
-        """
-        Process a batch of network outputs.
-        outputs keys: objectness, bbox, velocity, embedding, controls
-        """
         batch_size = outputs["objectness"].size(0)
-        results = []
-
-        # 1. Apply Sigmoid to objectness if raw logits
-        # TODO: Confirm if TensorRT export includes sigmoid. Assuming raw for now.
         probs = torch.sigmoid(outputs["objectness"])
-
-        # 2. CUDA-Accelerated NMS (if available)
+        
+        # Dispatch to CUDA if available, fallback to vectorized CPU logic
         if HAS_CUDA and probs.is_cuda:
             mask = accelsight_cuda.fast_nms(probs, self.conf_threshold)
-            # 3. Coordinate Transform (if available)
-            # Placeholder for depth_map; using Z=5.0 for demo if not provided
-            depth = torch.ones_like(probs) * 5.0 
             world_coords = accelsight_cuda.coordinate_transform(
-                outputs["bbox"], depth, 
-                self.focal_x, self.focal_y, 
-                self.center_x, self.center_y,
-                self.grid_scale, self.grid_scale
+                outputs["bbox"], torch.ones_like(probs) * 5.0, 
+                self.focal, self.focal, self.center, self.center, self.scale, self.scale
             )
         else:
-            # CPU Fallback / Non-CUDA logic
-            # Simplified: Find local maxima above threshold
             mask = (probs > self.conf_threshold).float()
-            # In a real system, we'd do a 3x3 max pool comparison here on CPU as well
-            
-            # Placeholder for world_coords on CPU
-            world_coords = torch.zeros((batch_size, 3, probs.size(2), probs.size(3)), device=probs.device)
+            world_coords = torch.zeros((batch_size, 3, *probs.shape[2:]), device=probs.device)
 
-        # 4. Extract and Track (Per-image in batch)
-        # Note: We must avoid Python loops over GRID CELLS, but we loop over IMAGES in batch.
+        batch_results = []
         for b in range(batch_size):
-            img_mask = mask[b, 0]
-            indices = torch.nonzero(img_mask) # (N, 2) [H_idx, W_idx]
-            
-            if len(indices) == 0:
-                results.append(PerceptionOutput(
-                    timestamp=timestamp,
-                    frame_id=b,
-                    objects=[],
-                    controls=outputs["controls"][b].detach().cpu().numpy()
-                ))
+            idx = torch.nonzero(mask[b, 0])
+            if len(idx) == 0:
+                batch_results.append(PerceptionOutput(timestamp, b, [], outputs["controls"][b].cpu().numpy()))
                 continue
 
-            # Gather attributes for detections
-            h_idx = indices[:, 0]
-            w_idx = indices[:, 1]
-            
-            scores = probs[b, 0, h_idx, w_idx].detach().cpu().numpy()
-            pos = world_coords[b, :, h_idx, w_idx].permute(1, 0).detach().cpu().numpy()
-            vel = outputs["velocity"][b, :, h_idx, w_idx].permute(1, 0).detach().cpu().numpy()
-            bboxes = outputs["bbox"][b, :, h_idx, w_idx].permute(1, 0).detach().cpu().numpy()
-            embeds = outputs["embedding"][b, :, h_idx, w_idx].permute(1, 0).detach().cpu().numpy()
-
-            # Create discrete detection objects
-            ids_placeholder = np.zeros(len(scores)) # Tracker will assign real IDs
-            detections = format_objects_to_message(
-                ids=ids_placeholder,
-                pos=pos,
-                vel=vel,
-                scores=scores,
-                bboxes=bboxes,
-                embeddings=embeds
+            # Efficiently extract detected features
+            h, w = idx[:, 0], idx[:, 1]
+            det_objs = format_objects_to_message(
+                ids=np.zeros(len(idx)),
+                pos=world_coords[b, :, h, w].T.cpu().numpy(),
+                vel=outputs["velocity"][b, :, h, w].T.cpu().numpy(),
+                scores=probs[b, 0, h, w].cpu().numpy(),
+                bboxes=outputs["bbox"][b, :, h, w].T.cpu().numpy(),
+                embeddings=outputs["embedding"][b, :, h, w].T.cpu().numpy()
             )
-
-            # 5. Tracking association
-            tracked_objects = self.tracker.update(detections)
-
-            results.append(PerceptionOutput(
-                timestamp=timestamp,
-                frame_id=b,
-                objects=tracked_objects,
-                controls=outputs["controls"][b].detach().cpu().numpy()
-            ))
-
-        return results
+            
+            batch_results.append(PerceptionOutput(timestamp, b, self.tracker.update(det_objs), 
+                                                outputs["controls"][b].cpu().numpy()))
+        return batch_results

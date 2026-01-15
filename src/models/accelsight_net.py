@@ -6,6 +6,7 @@ from .spatial_encoder import SpatialEncoder
 from .temporal_encoder import SpatioTemporalEncoder
 from .lite_head import LiteDetectionHead, LiteRegressionHead
 from .control_head import ControlHead
+from .post_processor import PostProcessor
 
 class AccelSightNet(nn.Module):
     """

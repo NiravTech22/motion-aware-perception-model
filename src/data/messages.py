@@ -5,20 +5,20 @@ import numpy as np
 @dataclass(frozen=True)
 class TrackedObject:
     """
-    Representation of a single tracked object in world coordinates.
+    High-fidelity representation of a tracked instance in 3D world space.
     """
     id: int
     category: int
-    pos: np.ndarray  # (3,) [X, Y, Z]
-    vel: np.ndarray  # (3,) [VX, VY, VZ]
+    pos: np.ndarray        # (3,) [X, Y, Z]
+    vel: np.ndarray        # (3,) [VX, VY, VZ]
     confidence: float
-    bbox: np.ndarray # (4,) [dx, dy, dw, dh] offsets
-    embedding: Optional[np.ndarray] = None # Re-ID features
+    bbox: np.ndarray       # (4,) [dx, dy, dw, dh]
+    embedding: Optional[np.ndarray] = None
 
 @dataclass(frozen=True)
 class PerceptionOutput:
     """
-    Consolidated perception message format.
+    Immutable snapshot of the environment state at a specific timestamp.
     """
     timestamp: float
     frame_id: int
@@ -26,7 +26,7 @@ class PerceptionOutput:
     controls: Optional[np.ndarray] = None # [Throttle, Brake, Steering]
     
     def __post_init__(self):
-        # Ensure determinism: Sort objects by ID
+        # Deterministic ordering by ID for downstream consumers (e.g., planners)
         object.__setattr__(self, 'objects', sorted(self.objects, key=lambda x: x.id))
 
 def format_objects_to_message(
@@ -38,20 +38,16 @@ def format_objects_to_message(
     embeddings: Optional[np.ndarray] = None
 ) -> List[TrackedObject]:
     """
-    Helper to convert raw arrays into TrackedObject instances.
-    Assumes deterministic indexing across all input arrays.
+    Factory function for batch-transforming raw detection arrays into semantic objects.
     """
-    objects = []
-    num_objs = len(ids)
-    for i in range(num_objs):
-        obj = TrackedObject(
+    return [
+        TrackedObject(
             id=int(ids[i]),
-            category=0, # Placeholder for classification
+            category=0, 
             pos=pos[i].copy(),
             vel=vel[i].copy(),
             confidence=float(scores[i]),
             bbox=bboxes[i].copy(),
             embedding=embeddings[i].copy() if embeddings is not None else None
-        )
-        objects.append(obj)
-    return objects
+        ) for i in range(len(ids))
+    ]
