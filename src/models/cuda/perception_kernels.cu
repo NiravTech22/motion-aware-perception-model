@@ -1,8 +1,6 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
-// --- Fast NMS Kernel (Heatmap-based) ---
-// Uses 3D indexing: x -> width, y -> height, z -> batch
 __global__ void fast_nms_kernel(const float *__restrict__ objectness,
                                 float *__restrict__ output_mask, int batch_size,
                                 int height, int width, float threshold) {
@@ -22,7 +20,6 @@ __global__ void fast_nms_kernel(const float *__restrict__ objectness,
     return;
   }
 
-  // Local suppression: 3x3 window check for local maxima
   bool is_max = true;
   for (int dy = -1; dy <= 1; ++dy) {
     for (int dx = -1; dx <= 1; ++dx) {
@@ -37,7 +34,7 @@ __global__ void fast_nms_kernel(const float *__restrict__ objectness,
           is_max = false;
           break;
         }
-        // Tie-breaking by index to ensure deterministic NMS
+
         if (n_score == score && n_idx < idx) {
           is_max = false;
           break;
@@ -51,9 +48,6 @@ __global__ void fast_nms_kernel(const float *__restrict__ objectness,
   output_mask[idx] = is_max ? 1.0f : 0.0f;
 }
 
-// --- Coordinate Transform Kernel ---
-// Maps (grid_x, grid_y) + (dx, dy) and depth -> (X, Y, Z)
-// Uses 3D indexing: x -> width, y -> height, z -> batch
 __global__ void coordinate_transform_kernel(
     const float *__restrict__ bboxes,    // (B, 4, H, W) -> [dx, dy, dw, dh]
     const float *__restrict__ depth_map, // (B, 1, H, W)
@@ -72,12 +66,8 @@ __global__ void coordinate_transform_kernel(
   int b_offset = b * 4 * spatial_size;
   int w_offset = b * 3 * spatial_size;
 
-  // Center offsets from bboxes (B, 4, H, W)
-  // Channel 0: dx, Channel 1: dy
   float dx = bboxes[b_offset + 0 * spatial_size + grid_idx];
   float dy = bboxes[b_offset + 1 * spatial_size + grid_idx];
-
-  // Pixel coordinates in input image (e.g. 256x256)
   // Centering: grid center (w+0.5) + regression offset (dx)
   float px = ((float)w + 0.5f) * grid_scale_x + dx;
   float py = ((float)h + 0.5f) * grid_scale_y + dy;
@@ -96,8 +86,6 @@ __global__ void coordinate_transform_kernel(
   world_coords[w_offset + 1 * spatial_size + grid_idx] = Y;
   world_coords[w_offset + 2 * spatial_size + grid_idx] = Z;
 }
-
-// --- Launcher Functions ---
 
 void launch_fast_nms(const float *objectness, float *output_mask,
                      int batch_size, int height, int width, float threshold) {
