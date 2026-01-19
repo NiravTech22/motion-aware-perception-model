@@ -2,13 +2,15 @@ import torch
 import torch.onnx
 import os
 import sys
+import argparse
 
 # Add src to path
 sys.path.append(os.path.abspath("src"))
 from models.accelsight_net import AccelSightNet
 
 def export_to_onnx(output_path="docs/accelsight_model.onnx"):
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if os.path.dirname(output_path):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     # Initialize model
     model = AccelSightNet(num_frames=5)
@@ -45,4 +47,8 @@ def export_to_onnx(output_path="docs/accelsight_model.onnx"):
         print("Export failed.")
 
 if __name__ == "__main__":
-    export_to_onnx()
+    parser = argparse.ArgumentParser(description="Export AccelSightNet to ONNX")
+    parser.add_argument("--out", type=str, default="docs/accelsight_model.onnx", help="Path to save the ONNX model")
+    args = parser.parse_args()
+    
+    export_to_onnx(output_path=args.out)

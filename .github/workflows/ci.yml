@@ -40,23 +40,25 @@ jobs:
     - name: Forward-pass smoke test (real model)
       run: |
         python - << 'EOF'
-import sys, os
-sys.path.append(os.path.abspath("src"))
+        import sys, os
+        sys.path.append(os.path.abspath("src"))
 
-import torch
-from models.accelsight_net import AccelSightNet
+        import torch
+        from models.accelsight_net import AccelSightNet
 
-model = AccelSightNet(num_frames=5)
-model.eval()
+        # Input needs to match: (B, T, C, H, W)
+        # Using 5 channels as implied by "RGB + flow" comment in original request
+        model = AccelSightNet(num_frames=5, input_channels=5)
+        model.eval()
 
-# Example: RGB + flow = 5 channels (adjust if needed)
-x = torch.randn(1, 5, 224, 224)
+        # Input: Batch=1, Frames=5, Channels=5, H=224, W=224
+        x = torch.randn(1, 5, 5, 224, 224)
 
-with torch.no_grad():
-    y = model(x)
+        with torch.no_grad():
+            y = model(x)
 
-print("Forward pass OK. Output type:", type(y))
-EOF
+        print("Forward pass OK. Output keys:", y.keys())
+        EOF
 
     - name: Export ONNX
       run: |
