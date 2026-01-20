@@ -23,7 +23,7 @@ This repository implements a custom-trained perception model and inference pipel
 
 ---
 
-## System Architecture (High-Level)
+## High Level Diagram describing System Architecture
 
 ```mermaid
 flowchart TD
