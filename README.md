@@ -3,6 +3,8 @@
 [![Python Version](https://img.shields.io/badge/python-3.11-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![CUDA](https://img.shields.io/badge/CUDA-12.1-orange)](https://developer.nvidia.com/cuda-zone)
+[![C++](https://img.shields.io/badge/C%2B%2B-ISO%20%2B%2B20-blue)](https://isocpp.org/)
+
 
 High-performance GPU-accelerated perception pipeline for autonomous robotic systems, designed for real-time deployment and simulation-to-real workflows.
 
